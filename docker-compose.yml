@@ -1,0 +1,32 @@
+# Chạy: cp .env.example .env  →  sửa DOMAIN (và ADMIN_PASS nếu muốn)  →  docker compose up -d --build
+# Xem mật khẩu tạm của tài khoản Quản trị đầu tiên: docker compose logs app | grep "mật khẩu tạm"
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TRUST_PROXY: "1"            # lấy IP thật của người dùng từ Caddy
+      PUBLIC_URL: https://${DOMAIN}
+    volumes:
+      - app_data:/data            # SQLite + ảnh giao nhận + bản sao lưu hằng ngày (/data/backups). Vẫn chép volume này ra ngoài máy định kỳ.
+
+  caddy:                          # tự xin và gia hạn chứng chỉ HTTPS (bắt buộc: điện thoại chỉ cho lấy GPS và chụp ảnh trên https)
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:

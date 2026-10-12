@@ -1,0 +1,12 @@
+node_modules
+data/
+preview/
+dist/
+*.log
+__pycache__/
+.env
+scratch/
+*.sqlite
+*.db
+atlas-ops-hub-demo.html
+

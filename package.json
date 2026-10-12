@@ -1,0 +1,24 @@
+{
+  "name": "atlas-ops",
+  "version": "4.0.0",
+  "description": "Atlas Ops Hub kèm Rider Live: điều phối việc giữa Logistics, Tech, Sale và FieldOps; kho kit, thẻ nhớ, sự cố, dashboard theo vai trò, Rider Live theo dõi FO theo thời gian thực",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "demo": "DEMO=1 node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning test/deploy.test.mjs && node --disable-warning=ExperimentalWarning test/core.test.mjs && node --disable-warning=ExperimentalWarning test/demo.test.mjs && node --disable-warning=ExperimentalWarning test/backup.test.mjs && node --disable-warning=ExperimentalWarning test/http.test.mjs && node --disable-warning=ExperimentalWarning test/hub.test.mjs && node --disable-warning=ExperimentalWarning test/hub.demo.test.mjs && node --disable-warning=ExperimentalWarning test/hub.security.test.mjs && node --disable-warning=ExperimentalWarning test/fix.people.test.mjs && node --disable-warning=ExperimentalWarning test/fix.access.test.mjs && node --disable-warning=ExperimentalWarning test/fix.sys.test.mjs && node --disable-warning=ExperimentalWarning test/fix.trips.test.mjs && node --disable-warning=ExperimentalWarning test/fix.incid.test.mjs && node --disable-warning=ExperimentalWarning test/fix.stock.test.mjs && node --disable-warning=ExperimentalWarning test/fix.life.test.mjs && node --disable-warning=ExperimentalWarning test/fix.assign.test.mjs && node --disable-warning=ExperimentalWarning test/fix.cards.test.mjs && node --disable-warning=ExperimentalWarning test/fix.salem.test.mjs && node --disable-warning=ExperimentalWarning test/fix.integration.test.mjs && node --disable-warning=ExperimentalWarning test/fix.perf.test.mjs && node --disable-warning=ExperimentalWarning test/routing.test.mjs && node --disable-warning=ExperimentalWarning test/route.test.mjs && node --disable-warning=ExperimentalWarning test/hub.fuzz.mjs",
+    "test:fuzz": "node --disable-warning=ExperimentalWarning test/hub.fuzz.mjs",
+    "test:ui": "python3 test/ui/run_all.py",
+    "test:load": "node --disable-warning=ExperimentalWarning test/load.mjs",
+    "build:preview": "node tools/build-preview.mjs",
+    "test:security": "node --disable-warning=ExperimentalWarning test/hub.security.test.mjs",
+    "test:hubload": "node --disable-warning=ExperimentalWarning test/hub.load.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

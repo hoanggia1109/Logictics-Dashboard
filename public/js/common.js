@@ -421,7 +421,7 @@
 
   // ───────────── Đường đi thực tế (máy chủ lấy từ Google / OSRM; trình duyệt chỉ vẽ) ─────────────
   // Màu cố định theo nền bản đồ (nền luôn sáng, kể cả khi giao diện tối): nét chính xanh, đoạn chậm cam, đoạn kẹt đỏ, chặng đã đi xám.
-  const RT = { line: '#1456C8', slow: '#E8590C', jam: '#C92A2A', done: '#7B8597', est: '#14213D' };
+  const RT = { line: '#1A73E8', slow: '#FB8C00', jam: '#D93025', done: '#7B8597', est: '#1A73E8' };
   const BETA_WARN = 'Đường xe máy của Google đang thử nghiệm (beta): vài đoạn có thể chưa sát thực tế.'; // giống lib/routing.js
   const RT_SRC = { google: 'Google Maps', osrm: 'OSRM' };
   const RT_MODE = { TWO_WHEELER: 'xe máy', DRIVE: 'ô tô', driving: 'ô tô', car: 'ô tô' };
@@ -448,39 +448,118 @@
     }
     return out;
   }
+  /** Mã hoá [[lat, lon], ...] → polyline (precision 5). */
+  function encodePolyline(points, precision = 5) {
+    const f = 10 ** precision;
+    let out = '', pLat = 0, pLon = 0;
+    const enc = (v) => { let x = v < 0 ? ~(v << 1) : v << 1, s = ''; while (x >= 32) { s += String.fromCharCode((32 | (x & 31)) + 63); x >>= 5; } return s + String.fromCharCode(x + 63); };
+    for (const [a, b] of points || []) { const lat = Math.round(a * f), lon = Math.round(b * f); out += enc(lat - pLat) + enc(lon - pLon); pLat = lat; pLon = lon; }
+    return out;
+  }
+  const _osrmCache = new Map();
+  /** Lấy tuyến đường thực tế qua OSRM phía trình duyệt (fallback khi máy chủ chưa có tuyến). */
+  async function fetchOsrmRoute(pts) {
+    const coords = (pts || []).map(llOf).filter(Boolean);
+    if (coords.length < 2) return null;
+    const key = coords.map((c) => `${c[1].toFixed(5)},${c[0].toFixed(5)}`).join(';');
+    if (_osrmCache.has(key)) return _osrmCache.get(key);
+    try {
+      const url = `https://router.project-osrm.org/route/v1/driving/${key}?overview=false&steps=true&geometries=polyline&annotations=false`;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const j = await res.json();
+      if (j.code !== 'Ok' || !j.routes || !j.routes[0]) return null;
+      const r = j.routes[0];
+      const legs = (r.legs || []).map((l) => {
+        const stepPts = [];
+        for (const s of (l.steps || [])) {
+          if (s && s.geometry) {
+            const sp = decodePolyline(s.geometry);
+            for (const p of sp) {
+              const q = stepPts[stepPts.length - 1];
+              if (!q || q[0] !== p[0] || q[1] !== p[1]) stepPts.push(p);
+            }
+          }
+        }
+        return {
+          distance_m: Math.max(0, Math.round(+l.distance || 0)),
+          duration_s: Math.max(0, Math.round(+l.duration || 0)),
+          polyline: stepPts.length > 1 ? encodePolyline(stepPts) : '',
+          jams: [],
+        };
+      });
+      const route = {
+        provider: 'osrm',
+        mode: 'driving',
+        traffic: false,
+        distance_m: Math.round(r.distance),
+        duration_s: Math.round(r.duration),
+        legs,
+      };
+      _osrmCache.set(key, route);
+      return route;
+    } catch {
+      return null;
+    }
+  }
   const llOf = (p) => { const a = Array.isArray(p) ? p : p ? [p.lat, p.lon ?? p.lng] : []; return a[0] !== null && a[1] !== null && Number.isFinite(+a[0]) && Number.isFinite(+a[1]) ? [+a[0], +a[1]] : null; };
   /** Đường / task / kết quả /api/plan có tính giao thông (thời gian đi đã gồm kẹt xe) không. */
   const hasTraffic = (x) => !!x && (x.traffic === true || x.route_traffic === 1 || x.route_traffic === true || (!!x.route && x.route.traffic === true));
   /**
-   * Vẽ đường đi lên group (L.layerGroup). Chặng đang đi: viền trắng + nét liền xanh, đoạn chậm (cam) / kẹt xe (đỏ) theo leg.jams phủ lên;
-   * chặng chưa đi: nét đứt; chặng đã đi xong: không vẽ nữa (bản đồ chỉ còn phần việc phía trước).
-   * opt: { points: các điểm theo thứ tự ghé ([lat, lon] hoặc { lat, lon }), doneLegs: số chặng đầu đã đi (ẩn), activeLeg: chặng đang đi (nét liền), pane, color }.
-   * route null hoặc không có chặng → đường thẳng nét đứt nối opt.points như trước. Trả về L.LatLngBounds của những gì đã vẽ (isValid() = false nếu không vẽ gì).
+   * Vẽ đường đi lên group (L.layerGroup) chuẩn như Google Maps chỉ đường.
+   * Tuyến đường hiển thị nét liền nổi bật với viền trắng tròn góc sắc nét.
+   * Khi xem trước / thêm tuyến đường hoặc task chưa chạy: vẽ toàn bộ chặng bằng nét liền Google Maps.
+   * Task đang chạy: chặng đang đi nét liền phủ màu giao thông (xanh/cam/đỏ), chặng kế tiếp nét liền mềm, chặng đã đi ẩn.
+   * Chưa có dữ liệu tuyến đường: vẽ tạm nét đứt và tự động nạp đường thực tế từ OSRM để bám sát mặt đường.
    */
   function drawRoute(group, route, opt = {}) {
     const b = L.latLngBounds([]), pts = (opt.points || []).map(llOf).filter(Boolean), base = { interactive: false };
     if (opt.pane) base.pane = opt.pane;
     const line = (ll, o) => { for (const p of ll) b.extend(p); return L.polyline(ll, { ...base, ...o }).addTo(group); };
-    const dashed = (ll) => line(ll, { color: RT.est, weight: 3, opacity: 0.7, dashArray: '6 8' });
     for (const p of pts) b.extend(p);
     const legs = route && Array.isArray(route.legs) ? route.legs : [];
-    if (!legs.length) { if (pts.length > 1) dashed(pts); return b; }
     const done = Math.max(0, Math.floor(+opt.doneLegs || 0)), act = Number.isInteger(opt.activeLeg) ? opt.activeLeg : -1, main = opt.color || RT.line;
-    const rank = (i) => (i < done ? 0 : i === act ? 2 : 1); // chặng đã đi nằm dưới cùng, chặng đang đi nằm trên cùng
+    const allSolid = !!opt.allSolid || (act === -1 && done === 0);
+
+    if (!legs.length) {
+      if (pts.length > 1) {
+        const placeholder = line(pts, { color: RT.est, weight: 3, opacity: 0.65, dashArray: '6 8' });
+        if (opt.autoFetch !== false) {
+          fetchOsrmRoute(pts).then((r) => {
+            if (r && group) {
+              try { group.removeLayer(placeholder); } catch {}
+              drawRoute(group, r, { ...opt, autoFetch: false });
+              if (typeof opt.onRoute === 'function') opt.onRoute(r);
+            }
+          });
+        }
+      }
+      return b;
+    }
+
+    const rank = (i) => (i < done ? 0 : (allSolid || i === act) ? 2 : 1);
     legs.map((_, i) => i).sort((x, y) => rank(x) - rank(y) || x - y).forEach((i) => {
       const leg = legs[i] || {}, path = decodePolyline(leg.polyline);
       if (i < done) return; // chặng đã đi xong: không vẽ nữa
-      if (path.length < 2) { const a = pts[i], z = pts[i + 1]; if (a && z && (a[0] !== z[0] || a[1] !== z[1])) dashed([a, z]); return; } // chặng dài 0 hoặc hình đường hỏng
-      if (i === act) {
-        // Chặng đang đi: nét liền, phủ màu giao thông
-        line(path, { color: '#fff', weight: 9, opacity: 0.95 });
-        line(path, { color: main, weight: 6, opacity: 1 });
+      if (path.length < 2) {
+        const a = pts[i], z = pts[i + 1];
+        if (a && z && (a[0] !== z[0] || a[1] !== z[1])) line([a, z], { color: RT.est, weight: 3, opacity: 0.65, dashArray: '6 8' });
+        return;
+      }
+      if (allSolid || i === act) {
+        // Tuyến chỉ đường như Google Maps: viền trắng dày bo tròn góc + vệt xanh chỉ đường sắc nét
+        line(path, { color: '#ffffff', weight: 8, opacity: 0.95, lineCap: 'round', lineJoin: 'round' });
+        line(path, { color: main, weight: 5, opacity: 1, lineCap: 'round', lineJoin: 'round' });
         for (const j of Array.isArray(leg.jams) ? leg.jams : []) {
           if (!Array.isArray(j) || (j[2] !== 1 && j[2] !== 2)) continue;
           const seg = path.slice(Math.max(0, Math.floor(+j[0] || 0)), Math.max(0, Math.floor(+j[1] || 0)) + 1);
-          if (seg.length > 1) line(seg, { color: j[2] === 2 ? RT.jam : RT.slow, weight: 6, opacity: 1 });
+          if (seg.length > 1) line(seg, { color: j[2] === 2 ? RT.jam : RT.slow, weight: 5, opacity: 1, lineCap: 'round', lineJoin: 'round' });
         }
-      } else dashed(path); // chặng chưa tới lượt: nét đứt
+      } else {
+        // Chặng sắp đi tới: đường nét liền mềm với viền
+        line(path, { color: '#ffffff', weight: 7, opacity: 0.85, lineCap: 'round', lineJoin: 'round' });
+        line(path, { color: main, weight: 4.5, opacity: 0.85, lineCap: 'round', lineJoin: 'round' });
+      }
     });
     return b;
   }
@@ -587,7 +666,7 @@
     $, $$, el, esc, toast, store, distM, now, fmtHM, fmtDate, fmtDT, fmtKm, dateOf, today, dayStart, addDays, kmh, ago, span, nameParts, safeColor, telHref, pad2,
     ROLE_LABEL, TASK_ST, STOP_ST, BO_ST, WEATHER, TRAFFIC, ISSUES, isOpen, slaOf, countsText, progressOf,
     backend, api, modal, ask, copyText, compressImage, photoPicker, thumbs, viewPhotos, baseMap, killMap, pinIcon, siteIcon, gmapsDir, gmapsAt, parseCoord, HCMC, reqKey,
-    syncTiles, decodePolyline, drawRoute, routeLegs, hasTraffic, routeLegend, slaBreakdown, routeNote, routeText, taskRoute,
+    syncTiles, decodePolyline, encodePolyline, fetchOsrmRoute, drawRoute, routeLegs, hasTraffic, routeLegend, slaBreakdown, routeNote, routeText, taskRoute,
   });
   if (typeof ARL.syncCommonLabels === 'function') ARL.syncCommonLabels(ARL.lang);
 })();

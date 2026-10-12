@@ -41,8 +41,8 @@ const conf = {
   weatherLat: envNum('WEATHER_LAT', 10.7769), weatherLon: envNum('WEATHER_LON', 106.7009),
   // Đường đi thực tế cho task FO (lib/routing.js). Chỉ gửi toạ độ điểm giao nhận, không gửi GPS của FO. Khoá không bao giờ ra log hay trình duyệt.
   routing: {
-    provider: env.ROUTING_PROVIDER || 'none', key: env.GOOGLE_MAPS_API_KEY || '', mode: env.ROUTING_MODE || 'TWO_WHEELER', pref: env.ROUTING_PREF || 'TRAFFIC_AWARE', trafficLines: env.ROUTING_TRAFFIC_LINES !== '0',
-    dailyLimit: envNum('ROUTING_DAILY_LIMIT', 1500), timeoutMs: envNum('ROUTING_TIMEOUT_MS', 8000), osrmUrl: env.OSRM_URL || '', osrmProfile: env.OSRM_PROFILE || 'driving',
+    provider: env.ROUTING_PROVIDER || (env.GOOGLE_MAPS_API_KEY ? 'google' : 'osrm'), key: env.GOOGLE_MAPS_API_KEY || '', mode: env.ROUTING_MODE || 'TWO_WHEELER', pref: env.ROUTING_PREF || 'TRAFFIC_AWARE', trafficLines: env.ROUTING_TRAFFIC_LINES !== '0',
+    dailyLimit: envNum('ROUTING_DAILY_LIMIT', 1500), timeoutMs: envNum('ROUTING_TIMEOUT_MS', 8000), osrmUrl: env.OSRM_URL || 'https://router.project-osrm.org', osrmProfile: env.OSRM_PROFILE || 'driving',
   },
   // Nền bản đồ Google chính thức (lib/maptiles.js). Khoá trình duyệt giới hạn theo tên miền của PUBLIC_URL; trống = dùng TILE_URL như cũ.
   tilesKey: env.GOOGLE_MAPS_TILES_KEY || '',
@@ -121,17 +121,17 @@ let fakeNow = null; // DEMO=1: đồng hồ giả chỉ dùng lúc tạo lịch 
 if (conf.demo) deps.now = () => fakeNow ?? Date.now();
 if (conf.weatherAuto || conf.weatherUrl) deps.fetchWeather = fetchWeather;
 // Đường đi thực tế: chỉ gắn deps.route khi đã cấu hình đúng; cấu hình sai thì cảnh báo rồi chạy như cũ (SLA ước tính đường chim bay).
-// Chế độ mô phỏng không gọi dịch vụ ngoài: dữ liệu mẫu tạo hàng trăm task (cả lịch sử tua lại nhiều tuần) sẽ đốt hết lượt gọi.
-const routing = conf.demo ? null : createRouting({ ...conf.routing, tzOffsetMin: coreCfg.tzOffsetMin, log: (m) => console.warn('[route] ' + m) });
+// Chế độ mô phỏng không gọi dịch vụ ngoài lúc tạo lịch sử mẫu (fakeNow !== null): dữ liệu mẫu tạo hàng trăm task sẽ đốt hết lượt gọi.
+const routing = createRouting({ ...conf.routing, tzOffsetMin: coreCfg.tzOffsetMin, log: (m) => console.warn('[route] ' + m) });
 if (routing) {
-  deps.route = routing.route;
+  deps.route = (pts, opts) => (fakeNow !== null ? Promise.reject(new Error('demo_seed_skip')) : routing.route(pts, opts));
   if (routing.info().provider === 'google') {
     // Điều khoản Google Maps Platform (mục Routes API): chỉ lưu tạm toạ độ tối đa 30 ngày, không dùng cùng bản đồ không phải của Google.
     if (!(coreCfg.routeRetentionDays > 0 && coreCfg.routeRetentionDays <= 30)) { console.warn('[route] Điều khoản Google chỉ cho lưu tạm đường đi tối đa 30 ngày: ROUTE_RETENTION_DAYS được đặt về 30.'); coreCfg.routeRetentionDays = 30; }
     if (coreCfg.tileUrl && !/google/i.test(coreCfg.tileUrl)) console.warn('[route] TILE_URL không phải bản đồ Google: điều khoản Google cấm vẽ đường đi lấy từ Routes API lên bản đồ khác. Dùng lại bản đồ Google hoặc chuyển ROUTING_PROVIDER=osrm.');
   }
 }
-console.log(`[route] Đường đi thực tế: ${routing ? routing.info().text : `tắt${conf.demo ? ' trong chế độ mô phỏng (DEMO=1)' : ''} — SLA ước tính theo đường chim bay`}.`);
+console.log(`[route] Đường đi thực tế: ${routing ? routing.info().text : 'tắt — SLA ước tính theo đường chim bay'}.`);
 coreCfg.routingProvider = routing ? routing.info().provider : null; // trình duyệt: đường của Google chỉ vẽ trên bản đồ Google (bỏ lớp OpenStreetMap)
 const core = createCore(deps);
 // Nền bản đồ Google chính thức: máy chủ tạo và làm mới phiên Map Tiles, đưa mẫu địa chỉ ô bản đồ vào cfg.mapTiles; trình duyệt tự tải ô

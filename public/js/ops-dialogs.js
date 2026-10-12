@@ -105,13 +105,13 @@
       if (locked) {
         const tk = locked.task, my = seq;
         tk.stops.forEach((s, i) => { if (!s.is_return) L.marker([s.lat, s.lon], { icon: ARL.pinIcon(String(i + 1), s.status), interactive: false, keyboard: false }).addTo(pinL); b.extend([s.lat, s.lon]); });
-        ARL.taskRoute(tk.id, tk.route_src ? tk.route_at : null).catch(() => ({ route: null })).then((j) => { if (map && my === seq) { lineL.clearLayers(); ARL.drawRoute(lineL, j.stale ? null : j.route, { points: tk.stops }); } });
+        ARL.taskRoute(tk.id, tk.route_src ? tk.route_at : null).catch(() => ({ route: null })).then((j) => { if (map && my === seq) { lineL.clearLayers(); ARL.drawRoute(lineL, j.stale ? null : j.route, { points: tk.stops, allSolid: true }); } });
       } else {
         const sites = editor.ids().map((id) => (id ? ctx.S.sites.get(id) : null));
         sites.forEach((s, i) => { if (s) { L.marker([s.lat, s.lon], { icon: ARL.pinIcon(String(i + 1)), interactive: false, keyboard: false }).addTo(pinL); b.extend([s.lat, s.lon]); } });
         if (editor.complete() && sites.every(Boolean)) {
           const pts = roundTripEl.checked ? [...sites, sites[0]] : sites;
-          b.extend(ARL.drawRoute(lineL, res && res.sig === sigNow() ? res.j.route : null, { points: pts }));
+          b.extend(ARL.drawRoute(lineL, res && res.sig === sigNow() ? res.j.route : null, { points: pts, allSolid: true }));
         }
       }
       if (b.isValid()) map.fitBounds(b, { paddingTopLeft: [62, 22], paddingBottomRight: [70, 26], maxZoom: 15, animate: false }); // ghim không nằm dưới nút thu phóng (trái) và nút chọn lớp nền (phải)
@@ -133,6 +133,20 @@
         try {
           const j = await api('POST', '/api/plan', { stops, round_trip: roundTripEl.checked, ...when() });
           if (my !== seq || closed) return;
+          // Nếu backend chưa có tuyến đường thực tế (hoặc lỗi), dùng OSRM client-side bổ sung ngay
+          if (!j.route && stops.length >= 2) {
+            try {
+              const pts = roundTripEl.checked ? [...stops, stops[0]] : stops;
+              const coords = pts.map((s) => {
+                const site = s.site_id ? ctx.S.sites.get(s.site_id) : s;
+                return site ? [site.lat, site.lon] : null;
+              }).filter(Boolean);
+              if (coords.length >= 2) {
+                const r = await ARL.fetchOsrmRoute(coords);
+                if (r && my === seq) { j.route = r; if (!j.src || j.src === 'estimate') j.src = 'osrm'; }
+              }
+            } catch {}
+          }
           res = { sig, j }; pend = null;
           paintText(); paintMap();
         } catch (e) { if (my === seq && !closed) { pend = null; paintText(e.message); } }

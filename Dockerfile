@@ -7,7 +7,7 @@ COPY server.js ./
 COPY core ./core
 COPY lib ./lib
 COPY public ./public
-RUN mkdir -p /data && chown node:node /data
+RUN mkdir -p /data /app/data && chown -R node:node /data /app
 ENV NODE_ENV=production PORT=8080 DATA_DIR=/data
 VOLUME /data
 EXPOSE 8080
